@@ -84,8 +84,8 @@
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>
           </button>
           <div class="current-date-info">
-            <h2 id="currentDateTitle" class="date-title">Cargando...</h2>
-            <span id="currentDateSubtitle" class="date-subtitle">Elige tu horario preferido</span>
+            <h2 id="currentDateTitle" class="date-title clickable-date" title="Toca para saltar de mes o año">Cargando... ▾</h2>
+            <span id="currentDateSubtitle" class="date-subtitle">Toca el mes para saltar a largo plazo</span>
           </div>
           <button id="btnNextDay" class="btn-nav-arrow" aria-label="Día siguiente">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
@@ -144,6 +144,47 @@
         </ol>
       </footer>
     </main>
+
+    <!-- MODAL PARA SALTAR RÁPIDAMENTE DE MES Y AÑO -->
+    <div id="monthYearModal" class="modal-backdrop hidden" aria-hidden="true">
+      <div class="modal-container month-year-container">
+        <button id="btnCloseMonthModal" class="modal-close-btn" aria-label="Cerrar">&times;</button>
+        <div class="modal-header">
+          <span class="modal-badge">Calendario a Largo Plazo</span>
+          <h3>Saltar a Mes y Año</h3>
+          <p class="modal-slot-summary">Selecciona el mes y año para planificar tus citas cómodamente</p>
+        </div>
+        <div class="picker-selectors">
+          <div class="form-group">
+            <label for="selectMonthPicker">Mes:</label>
+            <select id="selectMonthPicker" class="form-control select-control">
+              <option value="0">Enero</option>
+              <option value="1">Febrero</option>
+              <option value="2">Marzo</option>
+              <option value="3">Abril</option>
+              <option value="4">Mayo</option>
+              <option value="5">Junio</option>
+              <option value="6">Julio</option>
+              <option value="7">Agosto</option>
+              <option value="8">Septiembre</option>
+              <option value="9">Octubre</option>
+              <option value="10">Noviembre</option>
+              <option value="11">Diciembre</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="selectYearPicker">Año:</label>
+            <select id="selectYearPicker" class="form-control select-control">
+              <option value="2026">2026</option>
+              <option value="2027">2027</option>
+              <option value="2028">2028</option>
+              <option value="2029">2029</option>
+            </select>
+          </div>
+        </div>
+        <button id="btnApplyMonthYear" class="btn btn-primary btn-block mt-3">Ir a este Mes</button>
+      </div>
+    </div>
 
     <!-- VENTANA MODAL PARA RESERVAR (SOLO NOMBRE, TELÉFONO Y SERVICIO) -->
     <div id="bookingModal" class="modal-backdrop hidden" aria-hidden="true">
@@ -249,7 +290,12 @@
               <span class="admin-tag">Panel Privado del Peluquero</span>
               <h2 class="admin-title">Gestión de Agenda y Amigos</h2>
             </div>
-            <button id="btnLogoutAdmin" class="btn-logout" title="Cerrar sesión">Salir</button>
+            <div class="admin-header-actions">
+              <button id="btnTogglePush" class="btn-push-toggle" title="Activar avisos en el móvil">
+                <span id="pushIcon">🔔</span> <span id="pushText">Avisos Móvil</span>
+              </button>
+              <button id="btnLogoutAdmin" class="btn-logout" title="Cerrar sesión">Salir</button>
+            </div>
           </div>
 
           <!-- PESTAÑAS DE NAVEGACIÓN DENTRO DEL PANEL -->
@@ -316,9 +362,13 @@
               <h4>Servicios Ofrecidos a tus Amigos</h4>
               <p class="settings-subtitle">Añade, edita o elimina los cortes y tratamientos que aparecerán en la lista para reservar:</p>
               
-              <!-- Formulario para nuevo servicio -->
+              <!-- Formulario para nuevo servicio con duración personalizada -->
               <form id="addServiceForm" class="add-service-form">
-                <input type="text" id="newServiceName" placeholder="Ej. Tratamiento de Keratina, Corte Niño..." class="form-control" required maxlength="60">
+                <input type="text" id="newServiceName" placeholder="Ej. Tinte, Keratina, Corte..." class="form-control" required maxlength="60">
+                <div class="duration-input-wrapper">
+                  <input type="number" id="newServiceDuration" min="15" max="360" step="15" value="45" class="form-control text-center" title="Duración en minutos" placeholder="Minutos">
+                  <span class="input-unit">min</span>
+                </div>
                 <button type="submit" class="btn btn-primary btn-auto">+ Añadir Servicio</button>
               </form>
               <div id="serviceFeedback" class="form-alert success-alert hidden"></div>

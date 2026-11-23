@@ -89,31 +89,55 @@ async function loadSalonInfo() {
 
 function populatePublicServicesDropdown() {
   const serviceSelect = document.getElementById('bookService');
+  if (!serviceSelect) return;
   serviceSelect.innerHTML = state.services
-    .map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`)
+    .map(s => {
+      const name = typeof s === 'object' && s !== null ? s.name : s;
+      const duration = typeof s === 'object' && s !== null && s.duration ? s.duration : 45;
+      return `<option value="${escapeHtml(name)}">${escapeHtml(name)} (${duration} min)</option>`;
+    })
     .join('');
 }
 
 // ========================================================
 // RENDERIZADO DEL SELECTOR DE DÍAS (CARRUSEL TÁCTIL)
 // ========================================================
-function renderDaysStrip() {
+function renderDaysStrip(baseIso) {
   const strip = document.getElementById('daysStrip');
   strip.innerHTML = '';
 
   const today = new Date();
-  const daysToShow = 21;
+  today.setHours(0, 0, 0, 0);
+
+  let startDate;
+  if (baseIso) {
+    startDate = parseIsoToDate(baseIso);
+  } else {
+    startDate = new Date(today);
+  }
+
+  // Si la fecha base está en el pasado con respecto a hoy, comenzar en hoy
+  if (startDate < today) {
+    startDate = new Date(today);
+  }
+
+  const daysToShow = 28;
 
   for (let i = 0; i < daysToShow; i++) {
-    const d = new Date();
-    d.setDate(today.getDate() + i);
+    const d = new Date(startDate);
+    d.setDate(startDate.getDate() + i);
     const iso = formatDateToIso(d);
+
+    const isToday = formatDateToIso(today) === iso;
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    const isTomorrow = formatDateToIso(tomorrow) === iso;
 
     const pill = document.createElement('div');
     pill.className = `day-pill ${iso === state.selectedDate ? 'active' : ''}`;
     pill.dataset.date = iso;
 
-    const dayName = i === 0 ? 'Hoy' : (i === 1 ? 'Mañana' : SHORT_DAY_NAMES[d.getDay()]);
+    const dayName = isToday ? 'Hoy' : (isTomorrow ? 'Mañana' : SHORT_DAY_NAMES[d.getDay()]);
     const dayNum = d.getDate();
     const monthName = MONTH_NAMES[d.getMonth()].substring(0, 3);
 
@@ -177,6 +201,19 @@ async function loadCalendarForSelectedDate() {
     blockedNotice.classList.add('hidden');
     morningSection.classList.remove('hidden');
     afternoonSection.classList.remove('hidden');
+
+    const subtitle = document.getElementById('currentDateSubtitle');
+    if (data.isTodayClosed) {
+      if (subtitle) {
+        subtitle.textContent = '⏰ Reservas del mismo día cerradas. Todas las franjas aparecen ocupadas.';
+        subtitle.style.color = '#B8860B';
+      }
+    } else {
+      if (subtitle) {
+        subtitle.textContent = 'Selecciona una hora para reservar';
+        subtitle.style.color = '';
+      }
+    }
 
     const morningSlots = data.slots.filter(s => s.period === 'mañana');
     const afternoonSlots = data.slots.filter(s => s.period === 'tarde');
@@ -254,6 +291,19 @@ function initRealtimeEvents() {
       }
       if (state.adminToken && !document.getElementById('adminModal').classList.contains('hidden')) {
         loadAdminAppointments();
+      }
+
+      if (data.status === 'pending') {
+        playChimeSound();
+        if (state.adminToken) {
+          const clientName = data.client_name || 'Un amigo';
+          const srvName = data.service || 'Cita';
+          const duration = data.duration ? ` (${data.duration} min)` : '';
+          triggerPushNotification(
+            '💈 ¡Nueva cita por confirmar!',
+            `${clientName} ha solicitado ${srvName}${duration} el ${data.date} a las ${data.time} h.`
+          );
+        }
       }
     });
 
@@ -382,6 +432,8 @@ document.getElementById('bookingForm').addEventListener('submit', async (e) => {
 function openAdminModal() {
   const modal = document.getElementById('adminModal');
   modal.classList.remove('hidden');
+
+  updatePushButtonUI();
 
   if (state.adminToken) {
     document.getElementById('adminLoginView').classList.add('hidden');
@@ -629,8 +681,7 @@ async function rejectAppointment(id, phone, name, service, date, time) {
 
     if (!res.ok) throw new Error('No se pudo cancelar la cita');
 
-    const displayDate = formatDisplayDate(date);
-    const textMsg = `Hola ${name}, lamentablemente no puedo atenderte el ${displayDate} a las ${time} h para ${service}. Por favor, entra en el calendario y elige cualquier otro horario que te venga bien: ${window.location.origin}`;
+    const textMsg = "por motivos externos no es posible aceptar su peticion, contactar directamente";
     const waUrl = `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(textMsg)}`;
 
     window.open(waUrl, '_blank');
@@ -790,25 +841,36 @@ function renderAdminServicesList() {
     return;
   }
 
-  container.innerHTML = state.services.map((srv, idx) => `
-    <div class="service-item-row" data-index="${idx}">
-      <span class="service-name-text">✂️ ${escapeHtml(srv)}</span>
-      <div class="service-actions">
-        <button class="btn-service-action btn-edit-srv" data-index="${idx}" data-name="${escapeHtml(srv)}">✏️ Editar</button>
-        <button class="btn-service-action btn-delete-srv" data-index="${idx}" data-name="${escapeHtml(srv)}">🗑️ Eliminar</button>
+  container.innerHTML = state.services.map((srv, idx) => {
+    const name = typeof srv === 'object' && srv !== null ? srv.name : srv;
+    const duration = typeof srv === 'object' && srv !== null && srv.duration ? srv.duration : 45;
+    return `
+      <div class="service-item-row" data-index="${idx}">
+        <div class="service-info-col">
+          <span class="service-name-text">✂️ ${escapeHtml(name)}</span>
+          <span class="service-duration-badge">⏱️ ${duration} min</span>
+        </div>
+        <div class="service-actions">
+          <button class="btn-service-action btn-edit-srv" data-index="${idx}" data-name="${escapeHtml(name)}" data-duration="${duration}">✏️ Editar</button>
+          <button class="btn-service-action btn-delete-srv" data-index="${idx}" data-name="${escapeHtml(name)}">🗑️ Eliminar</button>
+        </div>
       </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 
   // Listeners para editar
   document.querySelectorAll('.btn-edit-srv').forEach(btn => {
     btn.addEventListener('click', () => {
       const idx = btn.dataset.index;
       const currentName = btn.dataset.name;
+      const currentDuration = btn.dataset.duration || 45;
       const newName = prompt('Modificar nombre del servicio:', currentName);
-      if (newName && newName.trim() && newName.trim() !== currentName) {
-        updateService(idx, newName.trim());
-      }
+      if (newName === null) return;
+      const validName = newName.trim() || currentName;
+      const newDurationPrompt = prompt(`Duración en minutos para "${validName}" (ej: 30, 45, 60, 90):`, currentDuration);
+      if (newDurationPrompt === null) return;
+      const validDuration = Math.max(15, parseInt(newDurationPrompt, 10) || 45);
+      updateService(idx, validName, validDuration);
     });
   });
 
@@ -828,7 +890,9 @@ function renderAdminServicesList() {
 document.getElementById('addServiceForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const input = document.getElementById('newServiceName');
+  const durationInput = document.getElementById('newServiceDuration');
   const name = input.value.trim();
+  const duration = parseInt(durationInput ? durationInput.value : 45, 10) || 45;
   const feedback = document.getElementById('serviceFeedback');
 
   if (!name) return;
@@ -840,7 +904,7 @@ document.getElementById('addServiceForm').addEventListener('submit', async (e) =
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${state.adminToken}`
       },
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, duration })
     });
 
     const data = await res.json();
@@ -848,10 +912,11 @@ document.getElementById('addServiceForm').addEventListener('submit', async (e) =
 
     state.services = data.services;
     input.value = '';
+    if (durationInput) durationInput.value = '45';
     renderAdminServicesList();
     populatePublicServicesDropdown();
 
-    feedback.textContent = 'Servicio añadido con éxito';
+    feedback.textContent = `Servicio "${name}" (${duration} min) añadido con éxito`;
     feedback.className = 'form-alert success-alert';
     feedback.classList.remove('hidden');
     setTimeout(() => feedback.classList.add('hidden'), 2500);
@@ -864,7 +929,7 @@ document.getElementById('addServiceForm').addEventListener('submit', async (e) =
   }
 });
 
-async function updateService(index, name) {
+async function updateService(index, name, duration) {
   try {
     const res = await fetch(`/api/admin/services/${index}`, {
       method: 'PUT',
@@ -872,7 +937,7 @@ async function updateService(index, name) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${state.adminToken}`
       },
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, duration })
     });
 
     const data = await res.json();
@@ -1131,8 +1196,100 @@ document.getElementById('btnRestoreBackup').addEventListener('click', async () =
 });
 
 // ========================================================
-// LISTENERS GENERALES
+// LISTENERS GENERALES Y NOTIFICACIONES PUSH
 // ========================================================
+let swRegistration = null;
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js')
+    .then(reg => {
+      swRegistration = reg;
+    })
+    .catch(err => console.warn('SW error:', err));
+}
+
+function updatePushButtonUI() {
+  const btn = document.getElementById('btnTogglePush');
+  const icon = document.getElementById('pushIcon');
+  const text = document.getElementById('pushText');
+  if (!btn || !icon || !text) return;
+
+  if (!('Notification' in window)) {
+    btn.style.display = 'none';
+    return;
+  }
+
+  if (Notification.permission === 'granted') {
+    btn.classList.add('active');
+    icon.textContent = '🔔';
+    text.textContent = 'Avisos Activos';
+  } else if (Notification.permission === 'denied') {
+    btn.classList.remove('active');
+    icon.textContent = '🔕';
+    text.textContent = 'Avisos Bloqueados';
+  } else {
+    btn.classList.remove('active');
+    icon.textContent = '🔔';
+    text.textContent = 'Avisos Móvil';
+  }
+}
+
+function playChimeSound() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+    
+    // Generar un timbre agradable de 2 tonos (ding-dong tipo campana de peluquería)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(587.33, now);
+    gain1.gain.setValueAtTime(0.3, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.6);
+
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(880.00, now + 0.15);
+    gain2.gain.setValueAtTime(0.3, now + 0.15);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.15);
+    osc2.stop(now + 0.9);
+  } catch (e) {
+    console.warn('Audio chime error:', e);
+  }
+}
+
+function triggerPushNotification(title, body) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+
+  const options = {
+    body,
+    icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23B8860B"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>',
+    badge: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23B8860B"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>',
+    vibrate: [200, 100, 200, 100, 200],
+    tag: 'cita-peluqueria'
+  };
+
+  if (swRegistration && swRegistration.showNotification) {
+    swRegistration.showNotification(title, options);
+  } else {
+    try {
+      new Notification(title, options);
+    } catch (e) {
+      console.warn('Direct notification error:', e);
+    }
+  }
+}
+
 function setupEventListeners() {
   document.getElementById('btnPrevDay').addEventListener('click', () => {
     const d = parseIsoToDate(state.selectedDate);
@@ -1145,6 +1302,76 @@ function setupEventListeners() {
     d.setDate(d.getDate() + 1);
     selectDate(formatDateToIso(d));
   });
+
+  // Selector de salto a mes y año
+  const dateTitle = document.getElementById('currentDateTitle');
+  const monthYearModal = document.getElementById('monthYearModal');
+  const monthPicker = document.getElementById('selectMonthPicker');
+  const yearPicker = document.getElementById('selectYearPicker');
+
+  if (dateTitle && monthYearModal) {
+    dateTitle.addEventListener('click', () => {
+      const curDate = parseIsoToDate(state.selectedDate);
+      if (monthPicker) monthPicker.value = String(curDate.getMonth());
+      if (yearPicker) yearPicker.value = String(curDate.getFullYear());
+      monthYearModal.classList.remove('hidden');
+    });
+  }
+
+  const btnCloseMonthModal = document.getElementById('btnCloseMonthModal');
+  if (btnCloseMonthModal && monthYearModal) {
+    btnCloseMonthModal.addEventListener('click', () => {
+      monthYearModal.classList.add('hidden');
+    });
+  }
+
+  const btnApplyMonthYear = document.getElementById('btnApplyMonthYear');
+  if (btnApplyMonthYear && monthYearModal) {
+    btnApplyMonthYear.addEventListener('click', () => {
+      const selectedMonth = parseInt(monthPicker.value, 10);
+      const selectedYear = parseInt(yearPicker.value, 10);
+      
+      const today = new Date();
+      let targetDay = 1;
+      if (selectedYear === today.getFullYear() && selectedMonth === today.getMonth()) {
+        targetDay = today.getDate();
+      }
+
+      const newDateIso = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
+      monthYearModal.classList.add('hidden');
+      state.selectedDate = newDateIso;
+      renderDaysStrip(state.selectedDate);
+      selectDate(newDateIso);
+    });
+  }
+
+  // Activar avisos Push en el móvil del peluquero
+  const btnTogglePush = document.getElementById('btnTogglePush');
+  if (btnTogglePush) {
+    btnTogglePush.addEventListener('click', async () => {
+      if (!('Notification' in window)) {
+        alert('Este navegador no admite notificaciones del sistema.');
+        return;
+      }
+      if (Notification.permission === 'granted') {
+        playChimeSound();
+        triggerPushNotification('💈 Avisos configurados', 'Recibirás avisos en este móvil cuando haya citas por confirmar.');
+        return;
+      }
+      try {
+        const perm = await Notification.requestPermission();
+        updatePushButtonUI();
+        if (perm === 'granted') {
+          playChimeSound();
+          triggerPushNotification('💈 ¡Avisos activados con éxito!', 'Te avisaremos al instante en tu móvil cada vez que un amigo solicite cita.');
+        } else {
+          alert('Para recibir avisos en el móvil, autoriza los permisos de notificación en los ajustes de tu navegador.');
+        }
+      } catch (err) {
+        console.warn('Error solicitando permisos:', err);
+      }
+    });
+  }
 
   document.getElementById('btnCloseModal').addEventListener('click', closeBookingModal);
   document.getElementById('btnCancelBooking').addEventListener('click', closeBookingModal);

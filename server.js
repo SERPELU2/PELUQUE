@@ -45,6 +45,13 @@ db.exec(`
   );
 `);
 
+// Migración para añadir duración personalizada a las citas
+try {
+  db.exec('ALTER TABLE appointments ADD COLUMN duration INTEGER DEFAULT 45');
+} catch (e) {
+  // Columna ya existente
+}
+
 // Configuración por defecto
 function initDefaultConfig() {
   const defaults = {
@@ -58,13 +65,13 @@ function initDefaultConfig() {
     afternoon_end: '20:30',
     working_days: JSON.stringify([1, 2, 3, 4, 5, 6]),
     services: JSON.stringify([
-      'Corte de pelo',
-      'Peinado y estilismo',
-      'Corte + Peinado',
-      'Tinte / Coloración',
-      'Mechas / Balayage',
-      'Tratamiento de hidratación',
-      'Arreglo de barba / Ritual'
+      { name: 'Corte de pelo', duration: 30 },
+      { name: 'Peinado y estilismo', duration: 45 },
+      { name: 'Corte + Peinado', duration: 60 },
+      { name: 'Tinte / Coloración', duration: 90 },
+      { name: 'Mechas / Balayage', duration: 120 },
+      { name: 'Tratamiento de hidratación', duration: 45 },
+      { name: 'Arreglo de barba / Ritual', duration: 30 }
     ])
   };
 
@@ -90,6 +97,18 @@ function setConfig(key, value) {
     INSERT INTO config (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(key, String(value));
+}
+
+// Devuelve los servicios siempre en formato { name, duration }
+function getServicesNormalized() {
+  const raw = JSON.parse(getConfig('services') || '[]');
+  const defaultSlot = parseInt(getConfig('slot_duration_minutes') || '45', 10);
+  return raw.map(s => {
+    if (typeof s === 'string') {
+      return { name: s, duration: defaultSlot };
+    }
+    return { name: s.name, duration: parseInt(s.duration || defaultSlot, 10) };
+  });
 }
 
 // ========================================================
@@ -210,7 +229,7 @@ function parseJsonBody(req) {
   });
 }
 
-// Generador de franjas horarias
+// Generador de franjas horarias con duración y bloqueo del mismo día
 function generateSlots(dateStr) {
   const blocked = db.prepare('SELECT reason FROM blocked_days WHERE date = ?').get(dateStr);
   if (blocked) {
@@ -248,38 +267,74 @@ function generateSlots(dateStr) {
   const mStart = timeToMinutes(morningStart);
   const mEnd = timeToMinutes(morningEnd);
   for (let t = mStart; t + slotMinutes <= mEnd; t += slotMinutes) {
-    slots.push({ time: minutesToTime(t), period: 'mañana' });
+    slots.push({ time: minutesToTime(t), period: 'mañana', startMinutes: t });
   }
 
   const aStart = timeToMinutes(afternoonStart);
   const aEnd = timeToMinutes(afternoonEnd);
   for (let t = aStart; t + slotMinutes <= aEnd; t += slotMinutes) {
-    slots.push({ time: minutesToTime(t), period: 'tarde' });
+    slots.push({ time: minutesToTime(t), period: 'tarde', startMinutes: t });
   }
 
+  // 1. REGLA DEL MISMO DÍA: Si la fecha es hoy o anterior, las citas ya no se pueden reservar y salen como reservadas (rojo)
+  const todayStr = new Date().toLocaleDateString('sv-SE');
+  const isPastOrToday = dateStr <= todayStr;
+
+  // Consultar citas activas para esta fecha con su duración
   const appointments = db.prepare(`
-    SELECT time, status FROM appointments 
+    SELECT time, status, duration FROM appointments 
     WHERE date = ? AND status IN ('pending', 'confirmed')
   `).all(dateStr);
 
-  const statusMap = new Map();
+  // Mapear minutos ocupados según la duración de cada cita
+  const occupiedMinutesMap = new Map();
   for (const app of appointments) {
-    statusMap.set(app.time, app.status);
+    const startM = timeToMinutes(app.time);
+    const dur = parseInt(app.duration || slotMinutes, 10);
+    for (let m = startM; m < startM + dur; m += 1) {
+      const existing = occupiedMinutesMap.get(m);
+      if (existing !== 'confirmed') {
+        occupiedMinutesMap.set(m, app.status);
+      }
+    }
   }
 
   const resultSlots = slots.map(s => {
-    const appStatus = statusMap.get(s.time);
-    let status = 'available';
-    if (appStatus === 'pending') status = 'pending';
-    else if (appStatus === 'confirmed') status = 'confirmed';
+    // Si es hoy o pasado, salen todas como ocupadas/reservadas
+    if (isPastOrToday) {
+      return {
+        time: s.time,
+        period: s.period,
+        status: 'confirmed'
+      };
+    }
+
+    // Verificar si algún minuto de esta franja está ocupado por una cita
+    let slotStatus = 'available';
+    for (let m = s.startMinutes; m < s.startMinutes + slotMinutes; m += 1) {
+      if (occupiedMinutesMap.has(m)) {
+        const st = occupiedMinutesMap.get(m);
+        if (st === 'confirmed') {
+          slotStatus = 'confirmed';
+          break;
+        } else if (st === 'pending') {
+          slotStatus = 'pending';
+        }
+      }
+    }
+
     return {
       time: s.time,
       period: s.period,
-      status
+      status: slotStatus
     };
   });
 
-  return { isDayBlocked: false, slots: resultSlots };
+  return { 
+    isDayBlocked: false, 
+    isTodayClosed: isPastOrToday, 
+    slots: resultSlots 
+  };
 }
 
 const MIME_TYPES = {
@@ -349,14 +404,14 @@ const server = http.createServer(async (req, res) => {
 
   // 3. Info de la peluquería y servicios
   if (pathname === '/api/public/info' && method === 'GET') {
-    const services = JSON.parse(getConfig('services') || '[]');
+    const services = getServicesNormalized();
     const salonName = getConfig('peluquero_name') || 'Estudio de Peluquería';
     const workingDays = JSON.parse(getConfig('working_days') || '[1,2,3,4,5,6]');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ salonName, services, workingDays }));
   }
 
-  // 4. Reservar cita (Con Rate Limiting y Sanitización Estricta)
+  // 4. Reservar cita (Con Rate Limiting, Bloqueo Mismo Día y Duración de Servicio)
   if (pathname === '/api/public/book' && method === 'POST') {
     // Proteger contra bots y spam: max 12 reservas por hora por IP
     const rateCheck = checkRateLimit(clientIp, 'bookingAttempts', 12, 60 * 60 * 1000, 30 * 60 * 1000);
@@ -372,6 +427,15 @@ const server = http.createServer(async (req, res) => {
       if (!date || !time || !client_name || !client_phone || !service) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'Faltan datos obligatorios' }));
+      }
+
+      // Regla: No permitir reservas para el mismo día ni días pasados
+      const todayStr = new Date().toLocaleDateString('sv-SE');
+      if (date <= todayStr) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ 
+          error: 'No se permiten reservas para el mismo día. Por favor elige cita a partir de mañana.' 
+        }));
       }
 
       // Validaciones estrictas
@@ -395,24 +459,40 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ error: 'Número de teléfono no válido' }));
       }
 
-      // Comprobación atómica de franja libre
-      const existing = db.prepare(`
-        SELECT id FROM appointments 
-        WHERE date = ? AND time = ? AND status IN ('pending', 'confirmed')
-      `).get(date, time);
+      // Obtener duración del servicio seleccionado
+      const allServices = getServicesNormalized();
+      const srvObj = allServices.find(s => s.name === cleanService);
+      const slotMinutes = parseInt(getConfig('slot_duration_minutes') || '45', 10);
+      const duration = srvObj ? srvObj.duration : slotMinutes;
 
-      if (existing) {
-        res.writeHead(409, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ 
-          error: 'Esta hora acaba de ser reservada. Por favor elige otro horario libre.' 
-        }));
+      const [bookH, bookM] = time.split(':').map(Number);
+      const bookStart = bookH * 60 + bookM;
+      const bookEnd = bookStart + duration;
+
+      // Comprobar solapamiento de horario con cualquier cita existente en la fecha
+      const activeApps = db.prepare(`
+        SELECT time, duration FROM appointments 
+        WHERE date = ? AND status IN ('pending', 'confirmed')
+      `).all(date);
+
+      for (const app of activeApps) {
+        const [appH, appM] = app.time.split(':').map(Number);
+        const appStart = appH * 60 + appM;
+        const appEnd = appStart + parseInt(app.duration || slotMinutes, 10);
+
+        if (Math.max(bookStart, appStart) < Math.min(bookEnd, appEnd)) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ 
+            error: 'Este horario o parte del tiempo requerido ya está reservado. Por favor elige otro horario libre.' 
+          }));
+        }
       }
 
       const insert = db.prepare(`
-        INSERT INTO appointments (date, time, client_name, client_phone, service, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'))
+        INSERT INTO appointments (date, time, client_name, client_phone, service, status, duration, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?, datetime('now'), datetime('now'))
       `);
-      const info = insert.run(date, time, cleanName, cleanPhone, cleanService);
+      const info = insert.run(date, time, cleanName, cleanPhone, cleanService, duration);
 
       // Ficha de amigo segura
       db.prepare(`
@@ -421,8 +501,16 @@ const server = http.createServer(async (req, res) => {
         ON CONFLICT(client_name) DO NOTHING
       `).run(cleanName);
 
-      // Notificar en tiempo real (SSE)
-      broadcastEvent('slot_update', { date, time, status: 'pending' });
+      // Notificar en tiempo real con datos completos para la notificación Push en el móvil del peluquero
+      broadcastEvent('slot_update', { 
+        date, 
+        time, 
+        status: 'pending',
+        duration,
+        client_name: cleanName,
+        client_phone: cleanPhone,
+        service: cleanService
+      });
 
       res.writeHead(201, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
@@ -537,30 +625,32 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // 8. GESTIÓN DE SERVICIOS (Añadir, modificar, borrar)
+  // 8. GESTIÓN DE SERVICIOS CON DURACIÓN PERSONALIZADA
   if (pathname === '/api/admin/services' && method === 'GET') {
-    const services = JSON.parse(getConfig('services') || '[]');
+    const services = getServicesNormalized();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ services }));
   }
 
   if (pathname === '/api/admin/services' && method === 'POST') {
     try {
-      const { name } = await parseJsonBody(req);
+      const { name, duration } = await parseJsonBody(req);
       const cleanName = String(name || '').trim().replace(/[<>]/g, '').substring(0, 60);
+      const slotMinutes = parseInt(getConfig('slot_duration_minutes') || '45', 10);
+      const cleanDuration = Math.max(15, parseInt(duration || slotMinutes, 10));
 
       if (cleanName.length < 2) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'El nombre del servicio debe tener al menos 2 letras' }));
       }
 
-      let services = JSON.parse(getConfig('services') || '[]');
-      if (services.includes(cleanName)) {
+      let services = getServicesNormalized();
+      if (services.some(s => s.name.toLowerCase() === cleanName.toLowerCase())) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'Este servicio ya existe' }));
       }
 
-      services.push(cleanName);
+      services.push({ name: cleanName, duration: cleanDuration });
       setConfig('services', JSON.stringify(services));
 
       broadcastEvent('services_updated', { services });
@@ -573,11 +663,11 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // Modificar o Eliminar servicio por índice
+  // Modificar o Eliminar servicio por índice con duración
   if (pathname.startsWith('/api/admin/services/') && (method === 'PUT' || method === 'DELETE')) {
     try {
       const index = parseInt(pathname.replace('/api/admin/services/', ''), 10);
-      let services = JSON.parse(getConfig('services') || '[]');
+      let services = getServicesNormalized();
 
       if (isNaN(index) || index < 0 || index >= services.length) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -587,13 +677,16 @@ const server = http.createServer(async (req, res) => {
       if (method === 'DELETE') {
         services.splice(index, 1);
       } else if (method === 'PUT') {
-        const { name } = await parseJsonBody(req);
+        const { name, duration } = await parseJsonBody(req);
         const cleanName = String(name || '').trim().replace(/[<>]/g, '').substring(0, 60);
+        const slotMinutes = parseInt(getConfig('slot_duration_minutes') || '45', 10);
+        const cleanDuration = Math.max(15, parseInt(duration || services[index].duration || slotMinutes, 10));
+
         if (cleanName.length < 2) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'Nombre no válido' }));
         }
-        services[index] = cleanName;
+        services[index] = { name: cleanName, duration: cleanDuration };
       }
 
       setConfig('services', JSON.stringify(services));

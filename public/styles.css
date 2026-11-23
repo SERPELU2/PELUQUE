@@ -1445,3 +1445,95 @@ body {
   margin-top: 8px;
 }
 
+/* ========================================================
+   SELECTOR RÁPIDO DE MES Y AÑO & NOTIFICACIONES PUSH
+   ======================================================== */
+.clickable-date {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.clickable-date:hover {
+  color: var(--accent-gold-dark);
+  transform: scale(1.02);
+}
+
+.month-year-container {
+  max-width: 420px;
+}
+
+.picker-selectors {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.duration-input-wrapper {
+  position: relative;
+  width: 90px;
+  flex: 0 0 auto;
+}
+
+.duration-input-wrapper input {
+  padding-right: 28px;
+}
+
+.input-unit {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.service-duration-badge {
+  display: inline-block;
+  background-color: var(--bg-warm-tint);
+  color: var(--accent-gold-dark);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 8px;
+  margin-left: 6px;
+}
+
+.admin-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-push-toggle {
+  background-color: var(--bg-warm-light);
+  border: 1px solid var(--border-light);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.btn-push-toggle:hover {
+  background-color: var(--accent-gold-soft);
+  border-color: var(--accent-gold);
+}
+
+.btn-push-toggle.active {
+  background-color: var(--slot-green-bg);
+  border-color: var(--slot-green-border);
+  color: var(--slot-green-text);
+}
+
+
