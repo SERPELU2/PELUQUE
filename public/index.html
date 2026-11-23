@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Reserva de Citas | Estudio de Peluquería</title>
+  
+  <!-- Soporte para PWA en iOS y Android -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Peluquería Citas">
+  <meta name="theme-color" content="#FAF7F2">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23B8860B'><path d='M6 3a3 3 0 0 0-3 3v2a3 3 0 0 0 3 3h2v10a1 1 0 0 0 2 0V11h2a3 3 0 0 0 3-3V6a3 3 0 0 0-3-3H6zm0 2h3v4H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm5 0h3a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-3V5z'/></svg>">
+
+  <!-- Fuentes elegantes y legibles -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="app" class="app-wrapper">
+
+    <!-- CABECERA PRINCIPAL -->
+    <header class="app-header">
+      <div class="header-content">
+        <div class="brand">
+          <div class="brand-icon">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="6" cy="6" r="3"></circle>
+              <circle cx="6" cy="18" r="3"></circle>
+              <line x1="20" y1="4" x2="8.12" y2="15.88"></line>
+              <line x1="14.47" y1="14.48" x2="20" y2="20"></line>
+              <line x1="8.12" y1="8.12" x2="12" y2="12"></line>
+            </svg>
+          </div>
+          <div>
+            <h1 id="salonName" class="brand-title">Peluquería de Autor</h1>
+            <p class="brand-subtitle">Citas exclusivas para amigos</p>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <div id="liveIndicator" class="live-badge" title="Sincronizado en tiempo real">
+            <span class="pulse-dot"></span>
+            <span class="live-text">En directo</span>
+          </div>
+          <button id="btnOpenAdmin" class="btn-admin-access" title="Acceso exclusivo del peluquero">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            <span class="admin-btn-label">Peluquero</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- CUERPO PRINCIPAL / VISTA CLIENTE AMIGOS -->
+    <main class="main-container">
+      
+      <!-- LEYENDA EXPLICATIVA DE COLORES -->
+      <section class="legend-card">
+        <div class="legend-item">
+          <span class="status-dot dot-green"></span>
+          <span class="legend-label"><strong>Verde:</strong> Disponible</span>
+        </div>
+        <div class="legend-item">
+          <span class="status-dot dot-grey"></span>
+          <span class="legend-label"><strong>Gris:</strong> Pendiente</span>
+        </div>
+        <div class="legend-item">
+          <span class="status-dot dot-red"></span>
+          <span class="legend-label"><strong>Rojo:</strong> Ocupada</span>
+        </div>
+      </section>
+
+      <!-- SELECTOR DE FECHAS -->
+      <section class="date-selector-section">
+        <div class="month-header">
+          <button id="btnPrevDay" class="btn-nav-arrow" aria-label="Día anterior">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>
+          </button>
+          <div class="current-date-info">
+            <h2 id="currentDateTitle" class="date-title">Cargando...</h2>
+            <span id="currentDateSubtitle" class="date-subtitle">Elige tu horario preferido</span>
+          </div>
+          <button id="btnNextDay" class="btn-nav-arrow" aria-label="Día siguiente">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+          </button>
+        </div>
+
+        <!-- Barra desplazable de días (Touch & Scroll) -->
+        <div class="days-strip-wrapper">
+          <div id="daysStrip" class="days-strip">
+            <!-- Rellenado dinámicamente -->
+          </div>
+        </div>
+      </section>
+
+      <!-- HORAS DISPONIBLES / CALENDARIO DE FRANJAS -->
+      <section class="slots-section">
+        
+        <!-- Mensaje de día bloqueado o no laborable -->
+        <div id="dayBlockedNotice" class="blocked-notice hidden">
+          <div class="notice-icon">☕</div>
+          <h3 id="blockedReasonTitle">Día de descanso</h3>
+          <p id="blockedReasonDesc">El peluquero no tiene servicio en esta fecha. Selecciona otro día en el calendario superior.</p>
+        </div>
+
+        <!-- Franja de Mañana -->
+        <div id="morningSection" class="slot-group">
+          <div class="group-title">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+            <span>Horario de Mañana</span>
+          </div>
+          <div id="morningSlotsGrid" class="slots-grid">
+            <!-- Slots de mañana generados por JS -->
+          </div>
+        </div>
+
+        <!-- Franja de Tarde -->
+        <div id="afternoonSection" class="slot-group">
+          <div class="group-title">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+            <span>Horario de Tarde</span>
+          </div>
+          <div id="afternoonSlotsGrid" class="slots-grid">
+            <!-- Slots de tarde generados por JS -->
+          </div>
+        </div>
+      </section>
+
+      <!-- NOTA DE TRANQUILIDAD / CÓMO FUNCIONA -->
+      <footer class="app-instructions">
+        <h4>✨ ¿Cómo reservar tu cita?</h4>
+        <ol>
+          <li>Toca una hora disponible en color <strong>verde</strong>.</li>
+          <li>Indica tu nombre, teléfono y el corte o tratamiento deseado.</li>
+          <li>Tu hora pasará a color <strong>gris</strong> mientras el peluquero revisa tu petición.</li>
+          <li>Recibirás un mensaje de <strong>WhatsApp personal</strong> confirmando tu cita (pasará a color <strong>rojo</strong>).</li>
+        </ol>
+      </footer>
+    </main>
+
+    <!-- VENTANA MODAL PARA RESERVAR (SOLO NOMBRE, TELÉFONO Y SERVICIO) -->
+    <div id="bookingModal" class="modal-backdrop hidden" aria-hidden="true">
+      <div class="modal-container" role="dialog" aria-labelledby="modalBookingTitle">
+        <button id="btnCloseModal" class="modal-close-btn" aria-label="Cerrar ventana">&times;</button>
+        
+        <div class="modal-header">
+          <span class="modal-badge">Nueva Reserva</span>
+          <h3 id="modalBookingTitle">Reservar Cita</h3>
+          <p id="modalBookingSubtitle" class="modal-slot-summary">Día y Hora seleccionados</p>
+        </div>
+
+        <form id="bookingForm" class="booking-form" novalidate>
+          <input type="hidden" id="bookDate" name="date">
+          <input type="hidden" id="bookTime" name="time">
+
+          <!-- Selección del corte o peinado -->
+          <div class="form-group">
+            <label for="bookService">¿Qué te vas a hacer? <span class="required">*</span></label>
+            <select id="bookService" name="service" required class="form-control select-control">
+              <!-- Rellenado dinámicamente -->
+            </select>
+          </div>
+
+          <!-- Nombre del amigo -->
+          <div class="form-group">
+            <label for="bookClientName">Tu nombre <span class="required">*</span></label>
+            <input type="text" id="bookClientName" name="client_name" required placeholder="Ej. Carlos o Laura" class="form-control" autocomplete="name" maxlength="50">
+            <span class="field-hint">Solo tu nombre para que el peluquero sepa quién eres.</span>
+          </div>
+
+          <!-- Teléfono WhatsApp -->
+          <div class="form-group">
+            <label for="bookClientPhone">Teléfono WhatsApp <span class="required">*</span></label>
+            <input type="tel" id="bookClientPhone" name="client_phone" required placeholder="Ej. 612345678" class="form-control" autocomplete="tel" maxlength="15">
+            <span class="field-hint">Para recibir la confirmación directa del peluquero por WhatsApp.</span>
+          </div>
+
+          <!-- Privacidad mínima -->
+          <div class="privacy-note">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+            <span>No se recogen más datos. Tu cita quedará reservada de forma privada.</span>
+          </div>
+
+          <div id="bookingErrorMsg" class="form-alert error-alert hidden"></div>
+
+          <div class="modal-actions">
+            <button type="button" id="btnCancelBooking" class="btn btn-secondary">Cancelar</button>
+            <button type="submit" id="btnSubmitBooking" class="btn btn-primary">
+              <span class="btn-text">Mandar Reserva</span>
+              <span class="spinner hidden"></span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- MODAL DE ÉXITO TRAS MANDAR LA RESERVA -->
+    <div id="successModal" class="modal-backdrop hidden">
+      <div class="modal-container success-container">
+        <div class="success-icon-badge">✓</div>
+        <h3>¡Reserva Enviada!</h3>
+        <p id="successSummaryText">Tu cita ha sido registrada y ha pasado a color <strong>gris</strong>.</p>
+        <p class="success-whatsapp-note">
+          El peluquero revisará su agenda y te enviará un mensaje de confirmación por su WhatsApp personal.
+        </p>
+        <button id="btnCloseSuccess" class="btn btn-primary btn-block">Aceptar</button>
+      </div>
+    </div>
+
+    <!-- PANEL PRIVADO DEL PELUQUERO (PROTEGIDO POR CONTRASEÑA) -->
+    <div id="adminModal" class="modal-backdrop admin-modal-backdrop hidden">
+      <div class="modal-container admin-container">
+        <button id="btnCloseAdmin" class="modal-close-btn" aria-label="Cerrar panel">&times;</button>
+        
+        <!-- VISTA 1: LOGIN DE ACCESO PRIVADO -->
+        <div id="adminLoginView" class="admin-view">
+          <div class="admin-login-card">
+            <div class="lock-icon">
+              <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            </div>
+            <h3>Acceso Seguro del Peluquero</h3>
+            <p>Introduce tu contraseña para gestionar las citas, tus horarios, servicios y las fichas de tus amigos.</p>
+            
+            <form id="adminLoginForm" class="admin-login-form">
+              <div class="form-group">
+                <input type="password" id="adminPasswordInput" placeholder="Contraseña de acceso" class="form-control text-center" autocomplete="current-password" required>
+              </div>
+              <div id="adminLoginError" class="form-alert error-alert hidden">Contraseña incorrecta</div>
+              <button type="submit" class="btn btn-primary btn-block">Entrar al Panel Privado</button>
+              <p class="admin-hint">Por defecto es: <code>pelu1234</code> (puedes cambiarla dentro)</p>
+            </form>
+          </div>
+        </div>
+
+        <!-- VISTA 2: PANEL DE CONTROL COMPLETO DEL PELUQUERO -->
+        <div id="adminDashboardView" class="admin-view hidden">
+          <div class="admin-header-bar">
+            <div>
+              <span class="admin-tag">Panel Privado del Peluquero</span>
+              <h2 class="admin-title">Gestión de Agenda y Amigos</h2>
+            </div>
+            <button id="btnLogoutAdmin" class="btn-logout" title="Cerrar sesión">Salir</button>
+          </div>
+
+          <!-- PESTAÑAS DE NAVEGACIÓN DENTRO DEL PANEL -->
+          <nav class="admin-tabs">
+            <button class="tab-btn active" data-tab="tabAppointments">
+              📅 Citas
+              <span id="pendingBadgeCount" class="badge-count hidden">0</span>
+            </button>
+            <button class="tab-btn" data-tab="tabFriends">
+              ✂️ Fichas y Tintes
+            </button>
+            <button class="tab-btn" data-tab="tabServices">
+              🏷️ Servicios
+            </button>
+            <button class="tab-btn" data-tab="tabSchedule">
+              ⚙️ Horarios
+            </button>
+            <button class="tab-btn" data-tab="tabShare">
+              📲 Compartir QR
+            </button>
+            <button class="tab-btn" data-tab="tabBackup">
+              💾 Copia de Seguridad
+            </button>
+          </nav>
+
+          <!-- PESTAÑA 1: CITAS Y SOLICITUDES -->
+          <div id="tabAppointments" class="admin-tab-pane active">
+            <div class="tab-toolbar">
+              <div class="filter-group">
+                <label for="filterAdminDate">Fecha:</label>
+                <input type="date" id="filterAdminDate" class="form-control-sm">
+                <button id="btnFilterToday" class="btn-sm btn-outline">Hoy</button>
+                <button id="btnFilterAll" class="btn-sm btn-outline">Ver todas</button>
+              </div>
+              <button id="btnRefreshAppointments" class="btn-icon" title="Actualizar">🔄</button>
+            </div>
+
+            <div id="appointmentsList" class="appointments-list">
+              <!-- Lista de citas inyectada dinámicamente -->
+            </div>
+          </div>
+
+          <!-- PESTAÑA 2: FICHAS DE AMIGOS CON HISTORIAL Y NOTAS DE TINTES -->
+          <div id="tabFriends" class="admin-tab-pane">
+            <div class="friends-layout">
+              <div class="friends-sidebar">
+                <div class="search-box">
+                  <input type="text" id="searchFriendInput" placeholder="Buscar amigo por nombre..." class="form-control">
+                </div>
+                <div id="friendsList" class="friends-list">
+                  <!-- Rellenado dinámicamente -->
+                </div>
+              </div>
+
+              <div id="friendDetailCard" class="friend-detail-card empty-state">
+                <p>Selecciona un amigo de la lista para ver su historial de citas y notas de tintes/productos.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- PESTAÑA 3: GESTIÓN DE SERVICIOS -->
+          <div id="tabServices" class="admin-tab-pane">
+            <div class="settings-card">
+              <h4>Servicios Ofrecidos a tus Amigos</h4>
+              <p class="settings-subtitle">Añade, edita o elimina los cortes y tratamientos que aparecerán en la lista para reservar:</p>
+              
+              <!-- Formulario para nuevo servicio -->
+              <form id="addServiceForm" class="add-service-form">
+                <input type="text" id="newServiceName" placeholder="Ej. Tratamiento de Keratina, Corte Niño..." class="form-control" required maxlength="60">
+                <button type="submit" class="btn btn-primary btn-auto">+ Añadir Servicio</button>
+              </form>
+              <div id="serviceFeedback" class="form-alert success-alert hidden"></div>
+
+              <!-- Lista editable de servicios -->
+              <div id="adminServicesList" class="services-edit-list mt-3">
+                <!-- Inyectado por JS -->
+              </div>
+            </div>
+          </div>
+
+          <!-- PESTAÑA 4: CONFIGURACIÓN DE DÍAS HÁBILES Y HORARIOS -->
+          <div id="tabSchedule" class="admin-tab-pane">
+            <form id="scheduleConfigForm" class="settings-form">
+              <div class="settings-card">
+                <h4>Días Hábiles en que atiendes</h4>
+                <p class="settings-subtitle">Marca los días de la semana en que vas a aceptar citas:</p>
+                <div class="weekdays-grid">
+                  <label class="day-check"><input type="checkbox" name="workday" value="1"> <span>Lunes</span></label>
+                  <label class="day-check"><input type="checkbox" name="workday" value="2"> <span>Martes</span></label>
+                  <label class="day-check"><input type="checkbox" name="workday" value="3"> <span>Miércoles</span></label>
+                  <label class="day-check"><input type="checkbox" name="workday" value="4"> <span>Jueves</span></label>
+                  <label class="day-check"><input type="checkbox" name="workday" value="5"> <span>Viernes</span></label>
+                  <label class="day-check"><input type="checkbox" name="workday" value="6"> <span>Sábado</span></label>
+                  <label class="day-check"><input type="checkbox" name="workday" value="0"> <span>Domingo</span></label>
+                </div>
+              </div>
+
+              <div class="settings-card">
+                <h4>Horarios de Atención</h4>
+                <div class="time-ranges-grid">
+                  <div class="time-block">
+                    <h5>Mañana</h5>
+                    <div class="time-inputs">
+                      <div>
+                        <label>Desde:</label>
+                        <input type="time" id="cfgMorningStart" class="form-control">
+                      </div>
+                      <div>
+                        <label>Hasta:</label>
+                        <input type="time" id="cfgMorningEnd" class="form-control">
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="time-block">
+                    <h5>Tarde</h5>
+                    <div class="time-inputs">
+                      <div>
+                        <label>Desde:</label>
+                        <input type="time" id="cfgAfternoonStart" class="form-control">
+                      </div>
+                      <div>
+                        <label>Hasta:</label>
+                        <input type="time" id="cfgAfternoonEnd" class="form-control">
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-group mt-3">
+                  <label for="cfgSlotDuration">Duración de cada cita:</label>
+                  <select id="cfgSlotDuration" class="form-control">
+                    <option value="30">30 minutos</option>
+                    <option value="45">45 minutos</option>
+                    <option value="60">60 minutos (1 hora)</option>
+                    <option value="90">90 minutos (1h 30m)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="settings-card">
+                <h4>Seguridad y Datos del Salón</h4>
+                <div class="form-group">
+                  <label for="cfgSalonName">Nombre del Salón / Peluquería:</label>
+                  <input type="text" id="cfgSalonName" class="form-control" maxlength="80">
+                </div>
+                <div class="form-group">
+                  <label for="cfgNewPassword">Nueva contraseña de acceso (opcional):</label>
+                  <input type="password" id="cfgNewPassword" placeholder="Dejar en blanco para mantener la actual" class="form-control">
+                </div>
+              </div>
+
+              <div id="settingsFeedback" class="form-alert success-alert hidden">Configuración guardada correctamente</div>
+              <button type="submit" class="btn btn-primary btn-block">Guardar Cambios de Horario</button>
+            </form>
+          </div>
+
+          <!-- PESTAÑA 5: COMPARTIR CÓDIGO QR Y ENLACE WHATSAPP -->
+          <div id="tabShare" class="admin-tab-pane">
+            <div class="settings-card share-card">
+              <h4>📲 Compartir la Aplicación con tus Amigos</h4>
+              <p class="settings-subtitle">Tus amigos podrán escanear este código QR con la cámara de su móvil o entrar desde el enlace de WhatsApp para pedirte cita directamente.</p>
+
+              <!-- Vista previa del Código QR -->
+              <div class="qr-preview-container">
+                <div id="qrCodeContainer" class="qr-box">
+                  <!-- Código QR generado -->
+                </div>
+              </div>
+
+              <!-- Enlace web configurable -->
+              <div class="form-group mt-3">
+                <label for="shareUrlInput">Enlace web de tu aplicación:</label>
+                <div class="url-input-group">
+                  <input type="text" id="shareUrlInput" class="form-control" readonly>
+                  <button id="btnCopyShareUrl" class="btn btn-secondary" title="Copiar enlace">
+                    <span id="copyBtnText">📋 Copiar</span>
+                  </button>
+                </div>
+                <span class="field-hint">Este es el enlace al que accederán tus amigos para ver tus horas en verde.</span>
+              </div>
+
+              <!-- Botones de Compartir -->
+              <div class="share-actions mt-3">
+                <button id="btnShareWhatsApp" class="btn btn-wa-share">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.816 9.816 0 0 0 12.04 2m.01 1.67c2.2 0 4.26.86 5.82 2.41a8.173 8.173 0 0 1 2.4 5.83c0 4.54-3.7 8.24-8.24 8.24-1.48 0-2.93-.4-4.2-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.196 8.196 0 0 1-1.26-4.38c0-4.54 3.7-8.24 8.24-8.24m4.52 11.66c-.25-.13-1.47-.72-1.7-.81-.23-.08-.39-.13-.56.13-.17.25-.64.81-.79.97-.14.17-.29.19-.54.06-.25-.13-1.06-.39-2.01-1.24-.74-.66-1.25-1.48-1.39-1.73-.14-.25-.02-.38.11-.51.11-.11.25-.29.37-.43.13-.14.17-.25.25-.42.08-.17.04-.31-.02-.44-.06-.13-.56-1.35-.77-1.85-.2-.49-.41-.42-.56-.43h-.48c-.17 0-.44.06-.67.31-.23.25-.88.86-.88 2.1 0 1.24.9 2.44 1.03 2.61.13.17 1.78 2.71 4.3 3.8.6.26 1.07.41 1.43.53.6.19 1.15.16 1.58.1.48-.07 1.47-.6 1.68-1.18.21-.58.21-1.07.15-1.18-.06-.1-.23-.17-.48-.29z"/></svg>
+                  <span>Mandar Enlace por WhatsApp a tus Amigos</span>
+                </button>
+              </div>
+
+              <!-- Consejo para el tocador / espejo -->
+              <div class="mirror-tip-card mt-3">
+                <span class="tip-icon">💡</span>
+                <div>
+                  <strong>Consejo para tu peluquería:</strong>
+                  <p>Guarda o imprime este código QR y colócalo junto al espejo o mostrador. Tus amigos solo tendrán que apuntar con la cámara de su móvil para guardar tu agenda en su pantalla de inicio.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PESTAÑA 6: COPIA DE SEGURIDAD Y RESTAURACIÓN DE DATOS -->
+          <div id="tabBackup" class="admin-tab-pane">
+            <div class="settings-card">
+              <h4>💾 Copias de Seguridad y Control de Datos</h4>
+              <p class="settings-subtitle">Protege tus citas, fórmulas técnicas de tintes y fichas de amigos. Puedes descargar una copia de seguridad en cualquier momento o restaurar una previa para corregir datos.</p>
+
+              <!-- Tarjeta de Descarga -->
+              <div class="backup-action-box">
+                <div class="backup-icon">📥</div>
+                <div class="backup-info">
+                  <h5>Descargar Copia de Seguridad</h5>
+                  <p>Genera un archivo <code>.json</code> completo con todas tus citas históricas, clientes, observaciones de tintes y horarios. Guárdalo en tu ordenador, pendrive o Google Drive.</p>
+                </div>
+                <button id="btnDownloadBackup" class="btn btn-primary btn-auto">
+                  <span>📥 Descargar Copia (JSON)</span>
+                </button>
+              </div>
+
+              <!-- Tarjeta de Restauración / Carga -->
+              <div class="backup-action-box mt-3">
+                <div class="backup-icon">📤</div>
+                <div class="backup-info">
+                  <h5>Restaurar o Corregir Datos</h5>
+                  <p>Selecciona un archivo de copia de seguridad previo para restaurar tu base de datos. También puedes editar el archivo <code>.json</code> en el bloc de notas para corregir cualquier dato antes de subirlo.</p>
+                  <div class="mt-2">
+                    <input type="file" id="backupFileInput" accept=".json" class="form-control">
+                  </div>
+                </div>
+                <button id="btnRestoreBackup" class="btn btn-secondary btn-auto">
+                  <span>📤 Restaurar Datos</span>
+                </button>
+              </div>
+
+              <div id="backupFeedback" class="form-alert success-alert hidden mt-3"></div>
+
+              <!-- Explicación de cómo corregir datos -->
+              <div class="mirror-tip-card mt-3">
+                <span class="tip-icon">🛠️</span>
+                <div>
+                  <strong>¿Cómo corregir o editar datos manualmente?</strong>
+                  <p>El archivo descargado está en texto claro (JSON). Si necesitas corregir un teléfono, un nombre o añadir una fórmula de tinte en masa, puedes abrir el archivo con el Bloc de Notas de Windows, hacer los cambios, guardarlo y volver a cargarlo usando el botón "Restaurar Datos".</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/qrcode.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
