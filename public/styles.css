@@ -635,11 +635,46 @@ body {
   padding-right: 36px;
 }
 
+.label-with-counter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.label-with-counter label {
+  margin-bottom: 0 !important;
+}
+
+.char-counter {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.char-counter.limit-near {
+  color: #C59B27;
+  font-weight: 600;
+}
+
 .field-hint {
   display: block;
   font-size: 0.75rem;
   color: var(--text-muted);
   margin-top: 4px;
+}
+
+.field-optional {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.textarea-notes {
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.5;
+  font-family: var(--font-sans);
 }
 
 .privacy-note {
@@ -988,6 +1023,30 @@ body {
 .app-service-name {
   color: var(--accent-gold-dark);
   font-weight: 600;
+}
+
+.app-duration-badge {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-warm-light);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  padding: 1px 7px;
+  margin-left: 4px;
+}
+
+.app-notes {
+  margin-top: 6px;
+  padding: 7px 10px;
+  background: var(--bg-warm-light);
+  border-left: 3px solid var(--accent-gold);
+  border-radius: 0 6px 6px 0;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .app-card-actions {

@@ -223,6 +223,16 @@
             <span class="field-hint">Para recibir la confirmación directa del peluquero por WhatsApp.</span>
           </div>
 
+          <!-- Observaciones opcionales (máx 256 caracteres) -->
+          <div class="form-group">
+            <div class="label-with-counter">
+              <label for="bookNotes">Observaciones <span class="field-optional">(opcional)</span></label>
+              <span id="bookNotesCounter" class="char-counter">0/256</span>
+            </div>
+            <textarea id="bookNotes" name="notes" placeholder="Ej. Alergias a tintes, cabello muy largo, traer referencia de foto..." class="form-control textarea-notes" maxlength="256" rows="3"></textarea>
+            <span class="field-hint">Máximo 256 caracteres. Indícanos cualquier detalle o preferencia para tu cita.</span>
+          </div>
+
           <!-- Privacidad mínima -->
           <div class="privacy-note">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>

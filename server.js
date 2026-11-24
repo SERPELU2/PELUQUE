@@ -52,6 +52,13 @@ try {
   // Columna ya existente
 }
 
+// Migración para añadir observaciones a las citas
+try {
+  db.exec('ALTER TABLE appointments ADD COLUMN notes TEXT DEFAULT ""');
+} catch (e) {
+  // Columna ya existente
+}
+
 // Configuración por defecto
 function initDefaultConfig() {
   const defaults = {
@@ -229,8 +236,20 @@ function parseJsonBody(req) {
   });
 }
 
+// Obtener la fecha de hoy en zona horaria de España (UTC+1/UTC+2 según DST)
+// Render y otros servidores en la nube suelen estar en UTC, por lo que
+// hay que forzar la zona horaria correcta para España
+function getTodaySpain() {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date());
+  } catch (e) {
+    // Fallback: usar ISO y recortar (puede ser UTC, pero es mejor que nada)
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
 // Generador de franjas horarias con duración y bloqueo del mismo día
-function generateSlots(dateStr) {
+function generateSlots(dateStr, clientTodayStr) {
   const blocked = db.prepare('SELECT reason FROM blocked_days WHERE date = ?').get(dateStr);
   if (blocked) {
     return { isDayBlocked: true, reason: blocked.reason || 'Día cerrado por descanso', slots: [] };
@@ -276,9 +295,10 @@ function generateSlots(dateStr) {
     slots.push({ time: minutesToTime(t), period: 'tarde', startMinutes: t });
   }
 
-  // 1. REGLA DEL MISMO DÍA: Si la fecha es hoy o anterior, las citas ya no se pueden reservar y salen como reservadas (rojo)
-  const todayStr = new Date().toLocaleDateString('sv-SE');
-  const isPastOrToday = dateStr <= todayStr;
+  // 1. REGLA DEL MISMO DÍA:
+  // Comprobar tanto la fecha en España (Europe/Madrid) como la fecha enviada por el navegador del cliente
+  const todaySpain = getTodaySpain();
+  const isPastOrToday = dateStr <= todaySpain || (Boolean(clientTodayStr) && dateStr <= clientTodayStr);
 
   // Consultar citas activas para esta fecha con su duración
   const appointments = db.prepare(`
@@ -392,12 +412,14 @@ const server = http.createServer(async (req, res) => {
   // 2. Consulta de franjas y disponibilidad
   if (pathname === '/api/public/calendar' && method === 'GET') {
     const date = urlObj.searchParams.get('date');
+    // El cliente puede enviarnos su fecha local para detectar desfases de zona horaria
+    const clientToday = urlObj.searchParams.get('today') || null;
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'Fecha no válida' }));
     }
 
-    const calendarData = generateSlots(date);
+    const calendarData = generateSlots(date, clientToday);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ date, ...calendarData }));
   }
@@ -422,7 +444,7 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const body = await parseJsonBody(req);
-      let { date, time, client_name, client_phone, service } = body;
+      let { date, time, client_name, client_phone, service, notes, clientToday } = body;
 
       if (!date || !time || !client_name || !client_phone || !service) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -430,8 +452,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Regla: No permitir reservas para el mismo día ni días pasados
-      const todayStr = new Date().toLocaleDateString('sv-SE');
-      if (date <= todayStr) {
+      const todaySpain = getTodaySpain();
+      const isBlocked = date <= todaySpain || (Boolean(clientToday) && date <= clientToday);
+      if (isBlocked) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ 
           error: 'No se permiten reservas para el mismo día. Por favor elige cita a partir de mañana.' 
@@ -448,6 +471,7 @@ const server = http.createServer(async (req, res) => {
       const cleanName = String(client_name).trim().replace(/[<>]/g, '').substring(0, 60);
       const cleanPhone = String(client_phone).replace(/\D/g, '').substring(0, 15);
       const cleanService = String(service).trim().replace(/[<>]/g, '').substring(0, 60);
+      const cleanNotes = notes ? String(notes).trim().replace(/[<>]/g, '').substring(0, 256) : '';
 
       if (cleanName.length < 2) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -489,10 +513,10 @@ const server = http.createServer(async (req, res) => {
       }
 
       const insert = db.prepare(`
-        INSERT INTO appointments (date, time, client_name, client_phone, service, status, duration, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'pending', ?, datetime('now'), datetime('now'))
+        INSERT INTO appointments (date, time, client_name, client_phone, service, status, duration, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, datetime('now'), datetime('now'))
       `);
-      const info = insert.run(date, time, cleanName, cleanPhone, cleanService, duration);
+      const info = insert.run(date, time, cleanName, cleanPhone, cleanService, duration, cleanNotes);
 
       // Ficha de amigo segura
       db.prepare(`
@@ -509,7 +533,8 @@ const server = http.createServer(async (req, res) => {
         duration,
         client_name: cleanName,
         client_phone: cleanPhone,
-        service: cleanService
+        service: cleanService,
+        notes: cleanNotes
       });
 
       res.writeHead(201, { 'Content-Type': 'application/json' });

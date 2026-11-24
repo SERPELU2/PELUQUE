@@ -187,7 +187,9 @@ async function loadCalendarForSelectedDate() {
   afternoonGrid.innerHTML = '<div class="loading-slots">Cargando horarios...</div>';
 
   try {
-    const res = await fetch(`/api/public/calendar?date=${state.selectedDate}`);
+    // Enviamos la fecha local del cliente para que el servidor pueda corregir desfases de zona horaria
+    const clientToday = formatDateToIso(new Date());
+    const res = await fetch(`/api/public/calendar?date=${state.selectedDate}&today=${clientToday}`);
     const data = await res.json();
 
     if (data.isDayBlocked) {
@@ -202,10 +204,14 @@ async function loadCalendarForSelectedDate() {
     morningSection.classList.remove('hidden');
     afternoonSection.classList.remove('hidden');
 
+    // Comprobación estricta de hoy o pasado (tanto por servidor como por fecha local)
+    const clientTodayIso = formatDateToIso(new Date());
+    const isTodayOrPast = state.selectedDate <= clientTodayIso || Boolean(data.isTodayClosed);
+
     const subtitle = document.getElementById('currentDateSubtitle');
-    if (data.isTodayClosed) {
+    if (isTodayOrPast) {
       if (subtitle) {
-        subtitle.textContent = '⏰ Reservas del mismo día cerradas. Todas las franjas aparecen ocupadas.';
+        subtitle.textContent = '🔒 Reservas de hoy no disponibles. Todas las horas están reservadas.';
         subtitle.style.color = '#B8860B';
       }
     } else {
@@ -215,8 +221,16 @@ async function loadCalendarForSelectedDate() {
       }
     }
 
-    const morningSlots = data.slots.filter(s => s.period === 'mañana');
-    const afternoonSlots = data.slots.filter(s => s.period === 'tarde');
+    // Si es hoy o un día pasado: Forzar TODOS los slots a estado 'confirmed' (rojo y no seleccionable)
+    const processedSlots = (data.slots || []).map(s => {
+      if (isTodayOrPast) {
+        return { ...s, status: 'confirmed' };
+      }
+      return s;
+    });
+
+    const morningSlots = processedSlots.filter(s => s.period === 'mañana');
+    const afternoonSlots = processedSlots.filter(s => s.period === 'tarde');
 
     renderSlotsGroup(morningGrid, morningSlots);
     renderSlotsGroup(afternoonGrid, afternoonSlots);
@@ -332,6 +346,12 @@ function initRealtimeEvents() {
 }
 
 function updateSlotElementInDom(time, status) {
+  const clientToday = formatDateToIso(new Date());
+  if (state.selectedDate <= clientToday) {
+    // Si la fecha actual es hoy o anterior, las franjas deben permanecer siempre en rojo
+    return;
+  }
+
   const btn = document.querySelector(`.slot-button[data-time="${time}"][data-date="${state.selectedDate}"]`);
   if (!btn) return;
 
@@ -365,6 +385,13 @@ function openBookingModal(dateIso, time) {
   document.getElementById('bookingErrorMsg').classList.add('hidden');
   document.getElementById('bookClientName').value = '';
   document.getElementById('bookClientPhone').value = '';
+  const notesEl = document.getElementById('bookNotes');
+  const counterEl = document.getElementById('bookNotesCounter');
+  if (notesEl) notesEl.value = '';
+  if (counterEl) {
+    counterEl.textContent = '0/256';
+    counterEl.classList.remove('limit-near');
+  }
 
   modal.classList.remove('hidden');
   document.getElementById('bookClientName').focus();
@@ -383,6 +410,9 @@ document.getElementById('bookingForm').addEventListener('submit', async (e) => {
   const service = document.getElementById('bookService').value;
   const client_name = document.getElementById('bookClientName').value.trim();
   const client_phone = document.getElementById('bookClientPhone').value.trim();
+  const notesEl = document.getElementById('bookNotes');
+  const notes = notesEl ? notesEl.value.trim() : '';
+  const clientToday = formatDateToIso(new Date());
   const errorMsg = document.getElementById('bookingErrorMsg');
   const btnSubmit = document.getElementById('btnSubmitBooking');
 
@@ -401,7 +431,7 @@ document.getElementById('bookingForm').addEventListener('submit', async (e) => {
     const res = await fetch('/api/public/book', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date, time, service, client_name, client_phone })
+      body: JSON.stringify({ date, time, service, client_name, client_phone, notes, clientToday })
     });
 
     const result = await res.json();
@@ -596,8 +626,9 @@ function renderAppointmentCard(app) {
 
       <div class="app-card-body">
         <div class="app-client-name">👤 ${escapeHtml(app.client_name)}</div>
-        <div class="app-service-name">✂️ ${escapeHtml(app.service)}</div>
+        <div class="app-service-name">✂️ ${escapeHtml(app.service)}${app.duration ? ` <span class="app-duration-badge">(${app.duration} min)</span>` : ''}</div>
         <div class="app-client-phone">📱 Tel: ${escapeHtml(app.client_phone)}</div>
+        ${app.notes ? `<div class="app-notes">💬 ${escapeHtml(app.notes)}</div>` : ''}
       </div>
 
       <div class="app-card-actions">
@@ -1370,6 +1401,17 @@ function setupEventListeners() {
       } catch (err) {
         console.warn('Error solicitando permisos:', err);
       }
+    });
+  }
+
+  // Contador dinámico de caracteres para observaciones (máx 256)
+  const notesTextarea = document.getElementById('bookNotes');
+  const notesCounter = document.getElementById('bookNotesCounter');
+  if (notesTextarea && notesCounter) {
+    notesTextarea.addEventListener('input', () => {
+      const len = notesTextarea.value.length;
+      notesCounter.textContent = `${len}/256`;
+      notesCounter.classList.toggle('limit-near', len >= 230);
     });
   }
 
