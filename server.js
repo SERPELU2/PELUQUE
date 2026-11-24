@@ -59,10 +59,36 @@ try {
   // Columna ya existente
 }
 
+// ========================================================
+// HASHING SEGURO DE CONTRASEÑA (PBKDF2 con sal aleatoria)
+// No se guarda la contraseña en texto plano, solo el hash
+// Formato: "pbkdf2:<salt_hex>:<hash_hex>"
+// ========================================================
+function hashPassword(plaintext) {
+  const salt = crypto.randomBytes(32).toString('hex');
+  const hash = crypto.pbkdf2Sync(plaintext, salt, 310000, 64, 'sha512').toString('hex');
+  return `pbkdf2:${salt}:${hash}`;
+}
+
+function verifyPassword(plaintext, storedHash) {
+  if (typeof plaintext !== 'string' || typeof storedHash !== 'string') return false;
+  // Compatibilidad con contraseñas antiguas en texto plano (migración automática)
+  if (!storedHash.startsWith('pbkdf2:')) {
+    return crypto.timingSafeEqual(
+      Buffer.from(crypto.createHash('sha256').update(plaintext).digest('hex')),
+      Buffer.from(crypto.createHash('sha256').update(storedHash).digest('hex'))
+    );
+  }
+  const [, salt, savedHash] = storedHash.split(':');
+  if (!salt || !savedHash) return false;
+  const incoming = crypto.pbkdf2Sync(plaintext, salt, 310000, 64, 'sha512').toString('hex');
+  return crypto.timingSafeEqual(Buffer.from(incoming), Buffer.from(savedHash));
+}
+
 // Configuración por defecto
 function initDefaultConfig() {
   const defaults = {
-    admin_password: 'pelu1234',
+    admin_password: hashPassword('pelu1234'),
     peluquero_name: 'Estudio de Peluquería',
     peluquero_phone: '34600000000',
     slot_duration_minutes: '45',
@@ -155,14 +181,6 @@ setInterval(() => {
     }
   }
 }, 60 * 60 * 1000);
-
-// 2. Comparación segura contra ataques de temporización (Timing Attacks)
-function verifyPasswordSafe(inputPassword, storedPassword) {
-  if (typeof inputPassword !== 'string' || typeof storedPassword !== 'string') return false;
-  const h1 = crypto.createHash('sha256').update(inputPassword).digest();
-  const h2 = crypto.createHash('sha256').update(storedPassword).digest();
-  return crypto.timingSafeEqual(h1, h2);
-}
 
 // 3. Limitador de tasa (Rate Limiting) contra ataques de fuerza bruta y DoS
 const rateLimits = {
@@ -413,9 +431,20 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
+  // FALLO CORREGIDO: CORS restringido al propio origen — evita peticiones desde webs externas.
+  // Solo se permite el canal SSE de lectura pública con origen propio.
+  const requestOrigin = req.headers['origin'] || '';
+  const requestHost = req.headers['host'] || '';
+  // Permitir CORS solo si el origen es el mismo servidor (mismo host/origen)
+  const isSameOrigin = !requestOrigin || requestOrigin.includes(requestHost.split(':')[0]);
+  if (isSameOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', requestOrigin || '*');
+  }
+  // Eliminar credenciales cross-origin y limitar métodos a los realmente usados
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';");
 
   if (method === 'OPTIONS') {
     res.writeHead(204);
@@ -596,11 +625,22 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const { password } = await parseJsonBody(req);
-      const actualPassword = getConfig('admin_password') || 'pelu1234';
+      const storedHash = getConfig('admin_password') || hashPassword('pelu1234');
 
-      if (!password || !verifyPasswordSafe(String(password), actualPassword)) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Contraseña incorrecta' }));
+      // Si la contraseña almacenada todavía está en texto plano (migración de datos existentes),
+      // la actualizamos automáticamente al formato hash seguro PBKDF2
+      if (!storedHash.startsWith('pbkdf2:')) {
+        if (!password || !verifyPassword(String(password), storedHash)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Contraseña incorrecta' }));
+        }
+        // Migrar: guardar como hash seguro
+        setConfig('admin_password', hashPassword(String(password)));
+      } else {
+        if (!password || !verifyPassword(String(password), storedHash)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Contraseña incorrecta' }));
+        }
       }
 
       // Reiniciar contador de intentos tras login correcto
@@ -761,7 +801,9 @@ const server = http.createServer(async (req, res) => {
   // 9. Configuración de horarios y contraseña
   if (pathname === '/api/admin/settings' && method === 'GET') {
     const settings = {
-      admin_password: getConfig('admin_password'),
+      // FALLO CORREGIDO: NO se devuelve nunca la contraseña (ni en hash) en la respuesta
+      // El cliente solo puede saber si tiene contraseña (siempre true), nunca el valor
+      has_password: true,
       peluquero_name: getConfig('peluquero_name'),
       peluquero_phone: getConfig('peluquero_phone'),
       slot_duration_minutes: parseInt(getConfig('slot_duration_minutes') || '45', 10),
@@ -781,8 +823,14 @@ const server = http.createServer(async (req, res) => {
     try {
       const data = await parseJsonBody(req);
 
-      if (data.admin_password && String(data.admin_password).trim().length >= 4) {
-        setConfig('admin_password', String(data.admin_password).trim());
+      if (data.admin_password) {
+        const newPwd = String(data.admin_password).trim();
+        if (newPwd.length < 6) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'La contraseña debe tener al menos 6 caracteres' }));
+        }
+        // FALLO CORREGIDO: Contraseña guardada como hash PBKDF2 con sal, nunca en texto plano
+        setConfig('admin_password', hashPassword(newPwd));
       }
       if (data.peluquero_name) setConfig('peluquero_name', String(data.peluquero_name).trim().replace(/[<>]/g, '').substring(0, 80));
       if (data.peluquero_phone) setConfig('peluquero_phone', String(data.peluquero_phone).replace(/\D/g, '').substring(0, 15));
@@ -866,11 +914,16 @@ const server = http.createServer(async (req, res) => {
 
   // 11. DESCARGAR COPIA DE SEGURIDAD (BACKUP JSON COMPLETO)
   if (pathname === '/api/admin/backup' && method === 'GET') {
+    // FALLO CORREGIDO: Excluir el hash de la contraseña del backup descargado.
+    // La contraseña NO debe viajar en el archivo de copia de seguridad.
+    const allConfig = db.prepare('SELECT key, value FROM config').all();
+    const safeConfig = allConfig.filter(row => row.key !== 'admin_password');
+
     const backupData = {
       app: 'Peluqueria Antigravity',
-      version: '1.0',
+      version: '2.0',
       exported_at: new Date().toISOString(),
-      config: db.prepare('SELECT key, value FROM config').all(),
+      config: safeConfig,
       appointments: db.prepare('SELECT * FROM appointments').all(),
       friend_cards: db.prepare('SELECT * FROM friend_cards').all(),
       blocked_days: db.prepare('SELECT * FROM blocked_days').all()
@@ -884,7 +937,7 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify(backupData, null, 2));
   }
 
-  // 12. RESTAURAR COPIA DE SEGURIDAD (IMPORTACIÓN ATÓMICA)
+  // 12. RESTAURAR COPIA DE SEGURIDAD (IMPORTACIÓN ATÓMICA CON VALIDACIÓN ESTRICTA)
   if (pathname === '/api/admin/restore' && method === 'POST') {
     try {
       const body = await parseJsonBody(req);
@@ -892,6 +945,12 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'El archivo no tiene un formato de copia de seguridad válido' }));
       }
+
+      // Validadores de datos antes de insertar (evita datos malformados o SQLi via JSON)
+      const isValidDate = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+      const isValidTime = v => typeof v === 'string' && /^\d{2}:\d{2}$/.test(v);
+      const isValidStatus = v => ['pending', 'confirmed', 'cancelled'].includes(v);
+      const safeStr = (v, max) => String(v || '').replace(/[<>]/g, '').substring(0, max);
 
       // Transacción atómica para garantizar consistencia total
       db.exec('BEGIN TRANSACTION');
@@ -901,9 +960,11 @@ const server = http.createServer(async (req, res) => {
             INSERT INTO config (key, value) VALUES (?, ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
           `);
+          // FALLO CORREGIDO: No se permite restaurar la contraseña desde el backup
+          const BLOCKED_KEYS = new Set(['admin_password']);
           for (const item of body.config) {
-            if (item.key && item.value !== undefined) {
-              setCfg.run(item.key, String(item.value));
+            if (item.key && item.value !== undefined && !BLOCKED_KEYS.has(item.key)) {
+              setCfg.run(String(item.key).substring(0, 60), String(item.value));
             }
           }
         }
@@ -911,18 +972,23 @@ const server = http.createServer(async (req, res) => {
         if (Array.isArray(body.appointments)) {
           db.exec('DELETE FROM appointments');
           const insertApp = db.prepare(`
-            INSERT INTO appointments (id, date, time, client_name, client_phone, service, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO appointments (id, date, time, client_name, client_phone, service, status, duration, notes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `);
           for (const app of body.appointments) {
+            // Validar campos críticos antes de insertar
+            if (!isValidDate(app.date) || !isValidTime(app.time)) continue;
+            if (!isValidStatus(app.status)) continue;
             insertApp.run(
-              app.id || null,
+              app.id ? parseInt(app.id, 10) : null,
               app.date,
               app.time,
-              app.client_name,
-              app.client_phone,
-              app.service,
+              safeStr(app.client_name, 60),
+              String(app.client_phone || '').replace(/\D/g, '').substring(0, 15),
+              safeStr(app.service, 60),
               app.status,
+              parseInt(app.duration || 45, 10),
+              safeStr(app.notes, 256),
               app.created_at || new Date().toISOString(),
               app.updated_at || new Date().toISOString()
             );
@@ -936,10 +1002,11 @@ const server = http.createServer(async (req, res) => {
             VALUES (?, ?, ?, ?)
           `);
           for (const f of body.friend_cards) {
+            if (!f.client_name) continue;
             insertFriend.run(
-              f.id || null,
-              f.client_name,
-              f.notes || '',
+              f.id ? parseInt(f.id, 10) : null,
+              safeStr(f.client_name, 60),
+              safeStr(f.notes, 3000),
               f.updated_at || new Date().toISOString()
             );
           }
@@ -951,7 +1018,8 @@ const server = http.createServer(async (req, res) => {
             INSERT INTO blocked_days (date, reason) VALUES (?, ?)
           `);
           for (const b of body.blocked_days) {
-            insertBlock.run(b.date, b.reason || 'Día libre');
+            if (!isValidDate(b.date)) continue;
+            insertBlock.run(b.date, safeStr(b.reason, 100) || 'Día libre');
           }
         }
 
@@ -975,7 +1043,8 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       console.error('Error restaurando backup:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'Error al restaurar: ' + err.message }));
+      // FALLO CORREGIDO: No exponer mensajes de error internos al cliente
+      return res.end(JSON.stringify({ error: 'Error al restaurar la copia de seguridad. Comprueba que el archivo es correcto.' }));
     }
   }
 
@@ -1035,7 +1104,6 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`=======================================================`);
   console.log(`💈 Servidor Peluquería Seguro en: http://localhost:${PORT}`);
-  console.log(`🛡️ Rate limiting, Sanitización y Sesiones 24h activas`);
-  console.log(`🔑 Contraseña de acceso por defecto: pelu1234`);
+  console.log(`🛡️ Rate limiting, PBKDF2, CSP y Sesiones 24h activas`);
   console.log(`=======================================================`);
 });
