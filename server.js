@@ -281,74 +281,107 @@ function generateSlots(dateStr, clientTodayStr) {
     return `${h}:${min}`;
   }
 
-  const slots = [];
-
-  const mStart = timeToMinutes(morningStart);
-  const mEnd = timeToMinutes(morningEnd);
-  for (let t = mStart; t + slotMinutes <= mEnd; t += slotMinutes) {
-    slots.push({ time: minutesToTime(t), period: 'mañana', startMinutes: t });
-  }
-
-  const aStart = timeToMinutes(afternoonStart);
-  const aEnd = timeToMinutes(afternoonEnd);
-  for (let t = aStart; t + slotMinutes <= aEnd; t += slotMinutes) {
-    slots.push({ time: minutesToTime(t), period: 'tarde', startMinutes: t });
-  }
-
   // 1. REGLA DEL MISMO DÍA:
   // Comprobar tanto la fecha en España (Europe/Madrid) como la fecha enviada por el navegador del cliente
   const todaySpain = getTodaySpain();
   const isPastOrToday = dateStr <= todaySpain || (Boolean(clientTodayStr) && dateStr <= clientTodayStr);
 
-  // Consultar citas activas para esta fecha con su duración
+  // Consultar citas activas para esta fecha con su duración real
   const appointments = db.prepare(`
     SELECT time, status, duration FROM appointments 
     WHERE date = ? AND status IN ('pending', 'confirmed')
   `).all(dateStr);
 
-  // Mapear minutos ocupados según la duración de cada cita
-  const occupiedMinutesMap = new Map();
-  for (const app of appointments) {
-    const startM = timeToMinutes(app.time);
-    const dur = parseInt(app.duration || slotMinutes, 10);
-    for (let m = startM; m < startM + dur; m += 1) {
-      const existing = occupiedMinutesMap.get(m);
-      if (existing !== 'confirmed') {
-        occupiedMinutesMap.set(m, app.status);
-      }
-    }
-  }
+  const allServices = getServicesNormalized();
+  const minServiceDuration = Math.min(...allServices.map(s => s.duration), 30);
 
-  const resultSlots = slots.map(s => {
-    // Si es hoy o pasado, salen todas como ocupadas/reservadas
-    if (isPastOrToday) {
-      return {
-        time: s.time,
-        period: s.period,
-        status: 'confirmed'
-      };
-    }
+  const mStart = timeToMinutes(morningStart);
+  const mEnd = timeToMinutes(morningEnd);
+  const aStart = timeToMinutes(afternoonStart);
+  const aEnd = timeToMinutes(afternoonEnd);
 
-    // Verificar si algún minuto de esta franja está ocupado por una cita
-    let slotStatus = 'available';
-    for (let m = s.startMinutes; m < s.startMinutes + slotMinutes; m += 1) {
-      if (occupiedMinutesMap.has(m)) {
-        const st = occupiedMinutesMap.get(m);
-        if (st === 'confirmed') {
-          slotStatus = 'confirmed';
-          break;
-        } else if (st === 'pending') {
-          slotStatus = 'pending';
+  // Generador dinámico de franjas horarias:
+  // Si una cita dura más de 45 min (o cualquier duración), la siguiente hora disponible
+  // se coloca EXACTAMENTE al terminar el tiempo reservado.
+  function buildPeriodSlots(shiftStart, shiftEnd, periodName) {
+    const periodApps = appointments
+      .filter(a => {
+        const m = timeToMinutes(a.time);
+        return m >= shiftStart && m < shiftEnd;
+      })
+      .map(a => {
+        const start = timeToMinutes(a.time);
+        const dur = parseInt(a.duration || slotMinutes, 10);
+        return {
+          time: a.time,
+          start,
+          duration: dur,
+          end: start + dur,
+          status: a.status
+        };
+      })
+      .sort((a, b) => a.start - b.start);
+
+    const result = [];
+    let currTime = shiftStart;
+
+    for (const app of periodApps) {
+      // 1. Huecos disponibles antes de esta cita
+      if (app.start > currTime) {
+        let gapT = currTime;
+        while (gapT < app.start) {
+          const remainingInGap = app.start - gapT;
+          if (remainingInGap >= minServiceDuration) {
+            result.push({
+              time: minutesToTime(gapT),
+              period: periodName,
+              status: isPastOrToday ? 'confirmed' : 'available',
+              duration: Math.min(slotMinutes, remainingInGap),
+              endTime: minutesToTime(Math.min(gapT + slotMinutes, app.start))
+            });
+            gapT += slotMinutes;
+          } else {
+            break;
+          }
         }
       }
+
+      // 2. Añadir la cita como franja ocupada / en revisión con su duración real
+      result.push({
+        time: app.time,
+        period: periodName,
+        status: isPastOrToday ? 'confirmed' : app.status,
+        duration: app.duration,
+        endTime: minutesToTime(app.end)
+      });
+
+      // 3. El tiempo para la siguiente cita arranca EXACTAMENTE cuando termina la cita actual
+      currTime = Math.max(currTime, app.end);
     }
 
-    return {
-      time: s.time,
-      period: s.period,
-      status: slotStatus
-    };
-  });
+    // 4. Huecos disponibles después de la última cita hasta fin de turno
+    while (currTime < shiftEnd) {
+      const remainingInShift = shiftEnd - currTime;
+      if (remainingInShift >= minServiceDuration) {
+        result.push({
+          time: minutesToTime(currTime),
+          period: periodName,
+          status: isPastOrToday ? 'confirmed' : 'available',
+          duration: Math.min(slotMinutes, remainingInShift),
+          endTime: minutesToTime(Math.min(currTime + slotMinutes, shiftEnd))
+        });
+        currTime += slotMinutes;
+      } else {
+        break;
+      }
+    }
+
+    return result;
+  }
+
+  const morningSlots = buildPeriodSlots(mStart, mEnd, 'mañana');
+  const afternoonSlots = buildPeriodSlots(aStart, aEnd, 'tarde');
+  const resultSlots = [...morningSlots, ...afternoonSlots];
 
   return { 
     isDayBlocked: false, 

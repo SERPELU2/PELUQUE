@@ -11,7 +11,10 @@
   <meta name="apple-mobile-web-app-title" content="Peluquería Citas">
   <meta name="theme-color" content="#FAF7F2">
   <link rel="manifest" href="/manifest.json">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23B8860B'><path d='M6 3a3 3 0 0 0-3 3v2a3 3 0 0 0 3 3h2v10a1 1 0 0 0 2 0V11h2a3 3 0 0 0 3-3V6a3 3 0 0 0-3-3H6zm0 2h3v4H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm5 0h3a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-3V5z'/></svg>">
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="apple-touch-icon" sizes="512x512" href="/icon-512.png">
 
   <!-- Fuentes elegantes y legibles -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -209,6 +212,22 @@
             </select>
           </div>
 
+          <!-- Resumen dinámico de duración y siguiente hora disponible -->
+          <div id="bookingTimeSummaryCard" class="booking-duration-card">
+            <div class="duration-row">
+              <span class="duration-pill">
+                ⏱️ <span id="summaryServiceDuration">45 min</span>
+              </span>
+              <span class="range-text">
+                De <strong id="summaryStartTime">--:--</strong> a <strong id="summaryEndTime">--:--</strong> h
+              </span>
+            </div>
+            <div class="next-slot-available-info">
+              ➡️ Próxima hora disponible para otros amigos: <strong id="summaryNextAvailableTime">--:-- h</strong>
+            </div>
+          </div>
+          <div id="bookingServiceWarning" class="form-alert error-alert hidden"></div>
+
           <!-- Nombre del amigo -->
           <div class="form-group">
             <label for="bookClientName">Tu nombre <span class="required">*</span></label>
@@ -301,6 +320,9 @@
               <h2 class="admin-title">Gestión de Agenda y Amigos</h2>
             </div>
             <div class="admin-header-actions">
+              <button id="btnInstallPwa" class="btn-install-pwa" title="Instalar mini-app en tu pantalla">
+                <span class="install-icon">📲</span> <span class="install-text">Instalar App</span>
+              </button>
               <button id="btnTogglePush" class="btn-push-toggle" title="Activar avisos en el móvil">
                 <span id="pushIcon">🔔</span> <span id="pushText">Avisos Móvil</span>
               </button>
@@ -508,6 +530,36 @@
                   <p>Guarda o imprime este código QR y colócalo junto al espejo o mostrador. Tus amigos solo tendrán que apuntar con la cámara de su móvil para guardar tu agenda en su pantalla de inicio.</p>
                 </div>
               </div>
+
+              <!-- Tarjeta de Instalación Directa de la Mini-App con Icono -->
+              <div class="settings-card install-pwa-card mt-3">
+                <div class="install-card-header">
+                  <span class="install-badge">📱 Acceso Rápido</span>
+                  <h4>Instalar Mini-App en tu Móvil con Icono Propio</h4>
+                  <p class="settings-subtitle">Crea un acceso directo oficial en la pantalla de tu teléfono (Android o iPhone) para abrir la agenda de citas con un toque, a pantalla completa y sin barras de navegador:</p>
+                </div>
+                <div class="install-btn-wrapper mt-2">
+                  <button id="btnInstallPwaTab" class="btn btn-primary btn-block btn-install-main">
+                    📲 Instalar Mini-App en la Pantalla de Inicio
+                  </button>
+                </div>
+                <div class="install-instructions mt-3">
+                  <div class="install-instruction-item">
+                    <span class="platform-icon">🤖</span>
+                    <div>
+                      <strong>Para Android (Google Chrome / Edge):</strong>
+                      <p>Pulsa el botón de arriba y confirma en <em>"Instalar"</em> o <em>"Añadir a pantalla principal"</em>.</p>
+                    </div>
+                  </div>
+                  <div class="install-instruction-item">
+                    <span class="platform-icon">🍏</span>
+                    <div>
+                      <strong>Para iPhone / iPad (Safari):</strong>
+                      <p>Pulsa en el botón <strong>Compartir</strong> de Safari (icono ⎋ con flecha hacia arriba) y selecciona <strong>"Añadir a la pantalla de inicio"</strong>.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -559,6 +611,42 @@
 
         </div>
 
+      </div>
+    </div>
+
+    <!-- MODAL GUÍA DE INSTALACIÓN PWA (ANDROID / IPHONE) -->
+    <div id="installGuideModal" class="modal-backdrop hidden" aria-hidden="true">
+      <div class="modal-container pwa-guide-modal" role="dialog" aria-labelledby="installGuideTitle">
+        <button id="btnCloseInstallGuide" class="modal-close-btn" aria-label="Cerrar">&times;</button>
+        <div class="modal-header text-center">
+          <div class="pwa-app-icon-preview">
+            <img src="/icon-192.png" alt="Icono Peluquería" width="64" height="64" class="app-icon-img">
+          </div>
+          <h3 id="installGuideTitle">Instalar Mini-App en tu Pantalla</h3>
+          <p class="modal-slot-summary">Crea el icono oficial de acceso directo en tu móvil</p>
+        </div>
+        <div class="pwa-guide-content">
+          <div id="guideAndroid" class="guide-platform-block">
+            <h4>🤖 En Android (Google Chrome):</h4>
+            <ol class="guide-steps">
+              <li>Pulsa en <strong>"Instalar Ahora"</strong> abajo o en el menú de Chrome (los 3 puntos ⋮).</li>
+              <li>Elige <strong>"Añadir a pantalla de inicio"</strong> o <strong>"Instalar aplicación"</strong>.</li>
+              <li>Confirma para que aparezca el icono en tu pantalla de inicio como una app normal.</li>
+            </ol>
+            <button id="btnTriggerAndroidInstall" class="btn btn-primary btn-block mt-2">📲 Instalar Ahora</button>
+          </div>
+          <div id="guideIos" class="guide-platform-block mt-3">
+            <h4>🍏 En iPhone / iPad (Safari):</h4>
+            <ol class="guide-steps">
+              <li>Pulsa el botón <strong>Compartir</strong> en la barra inferior de Safari (icono ⎋ con flecha hacia arriba).</li>
+              <li>Desliza hacia abajo en las opciones y selecciona <strong>"Añadir a la pantalla de inicio"</strong> (+).</li>
+              <li>Toca <strong>"Añadir"</strong> en la esquina superior derecha.</li>
+            </ol>
+          </div>
+        </div>
+        <div class="modal-footer mt-3">
+          <button id="btnDoneInstallGuide" class="btn btn-secondary btn-block">Cerrar</button>
+        </div>
       </div>
     </div>
 

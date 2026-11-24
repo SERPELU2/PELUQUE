@@ -5,6 +5,7 @@
 const state = {
   selectedDate: null, // 'YYYY-MM-DD'
   services: [],
+  currentSlots: [],
   workingDays: [1, 2, 3, 4, 5, 6],
   adminToken: localStorage.getItem('pelu_admin_token') || null,
   activeAdminTab: 'tabAppointments',
@@ -229,6 +230,8 @@ async function loadCalendarForSelectedDate() {
       return s;
     });
 
+    state.currentSlots = processedSlots;
+
     const morningSlots = processedSlots.filter(s => s.period === 'mañana');
     const afternoonSlots = processedSlots.filter(s => s.period === 'tarde');
 
@@ -262,8 +265,13 @@ function renderSlotsGroup(container, slots) {
     if (slot.status === 'pending') statusText = 'En revisión';
     if (slot.status === 'confirmed') statusText = 'Ocupada';
 
+    let timeDisplay = escapeHtml(slot.time);
+    if (slot.status !== 'available' && slot.endTime && slot.duration && slot.duration > 45) {
+      timeDisplay = `${escapeHtml(slot.time)} <small class="slot-end-label">(${slot.duration}m)</small>`;
+    }
+
     btn.innerHTML = `
-      <span class="slot-time">${escapeHtml(slot.time)}</span>
+      <span class="slot-time">${timeDisplay}</span>
       <span class="slot-status-label">${escapeHtml(statusText)}</span>
     `;
 
@@ -275,9 +283,9 @@ function renderSlotsGroup(container, slots) {
     } else {
       btn.disabled = true;
       if (slot.status === 'pending') {
-        btn.title = 'Esta cita ha sido solicitada por un amigo y está pendiente de aprobación';
+        btn.title = slot.endTime ? `Cita en revisión (hasta las ${slot.endTime} h)` : 'Cita solicitada pendiente de aprobación';
       } else {
-        btn.title = 'Hora ocupada y confirmada';
+        btn.title = slot.endTime ? `Ocupada (hasta las ${slot.endTime} h)` : 'Hora ocupada y confirmada';
       }
     }
 
@@ -374,8 +382,79 @@ function updateSlotElementInDom(time, status) {
 }
 
 // ========================================================
-// VENTANA MODAL DE RESERVA (AMIGOS)
+// VENTANA MODAL DE RESERVA (AMIGOS) CON CÁLCULO DE DURACIÓN
 // ========================================================
+function timeToMinutes(t) {
+  if (!t) return 0;
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function minutesToTime(m) {
+  const h = Math.floor(m / 60).toString().padStart(2, '0');
+  const min = (m % 60).toString().padStart(2, '0');
+  return `${h}:${min}`;
+}
+
+function updateBookingModalDuration() {
+  const serviceSelect = document.getElementById('bookService');
+  const timeInput = document.getElementById('bookTime');
+  if (!serviceSelect || !timeInput) return;
+
+  const time = timeInput.value;
+  if (!time) return;
+
+  const selectedName = serviceSelect.value;
+  const srvObj = (state.services || []).find(s => {
+    const name = typeof s === 'object' && s !== null ? s.name : s;
+    return name === selectedName;
+  });
+
+  const duration = (srvObj && srvObj.duration) ? parseInt(srvObj.duration, 10) : 45;
+  const startM = timeToMinutes(time);
+  const endM = startM + duration;
+  const endTime = minutesToTime(endM);
+
+  const durationEl = document.getElementById('summaryServiceDuration');
+  const startEl = document.getElementById('summaryStartTime');
+  const endEl = document.getElementById('summaryEndTime');
+  const nextEl = document.getElementById('summaryNextAvailableTime');
+  const warningEl = document.getElementById('bookingServiceWarning');
+  const btnSubmit = document.getElementById('btnSubmitBooking');
+
+  if (durationEl) durationEl.textContent = `${duration} min`;
+  if (startEl) startEl.textContent = time;
+  if (endEl) endEl.textContent = endTime;
+  if (nextEl) nextEl.textContent = `${endTime} h`;
+
+  // Comprobar si choca con alguna cita ya ocupada que arranque entre [startM, endM)
+  let collision = false;
+  let conflictTime = '';
+  if (Array.isArray(state.currentSlots)) {
+    for (const slot of state.currentSlots) {
+      if (slot.status === 'confirmed' || slot.status === 'pending') {
+        const slotM = timeToMinutes(slot.time);
+        if (slotM > startM && slotM < endM) {
+          collision = true;
+          conflictTime = slot.time;
+          break;
+        }
+      }
+    }
+  }
+
+  if (collision) {
+    if (warningEl) {
+      warningEl.textContent = `⚠️ Este servicio dura ${duration} min (hasta las ${endTime} h) y se solapa con otra cita reservada a las ${conflictTime} h. Por favor selecciona otro horario o un servicio más breve.`;
+      warningEl.classList.remove('hidden');
+    }
+    if (btnSubmit) btnSubmit.disabled = true;
+  } else {
+    if (warningEl) warningEl.classList.add('hidden');
+    if (btnSubmit) btnSubmit.disabled = false;
+  }
+}
+
 function openBookingModal(dateIso, time) {
   const modal = document.getElementById('bookingModal');
   document.getElementById('bookDate').value = dateIso;
@@ -392,6 +471,8 @@ function openBookingModal(dateIso, time) {
     counterEl.textContent = '0/256';
     counterEl.classList.remove('limit-near');
   }
+
+  updateBookingModalDuration();
 
   modal.classList.remove('hidden');
   document.getElementById('bookClientName').focus();
@@ -1436,4 +1517,122 @@ function setupEventListeners() {
 
   document.getElementById('filterAdminDate').addEventListener('change', loadAdminAppointments);
   document.getElementById('btnRefreshAppointments').addEventListener('click', loadAdminAppointments);
+
+  // Cambio dinámico de servicio en modal de reserva
+  const bookServiceEl = document.getElementById('bookService');
+  if (bookServiceEl) {
+    bookServiceEl.addEventListener('change', updateBookingModalDuration);
+  }
+
+  // Instalación PWA en Móvil / PC (Acceso directo con icono)
+  setupPwaInstallation();
+}
+
+// ========================================================
+// SISTEMA DE INSTALACIÓN PWA (ACCESO DIRECTO CON ICONO)
+// ========================================================
+let deferredInstallPrompt = null;
+
+function setupPwaInstallation() {
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    console.log('Evento de instalación PWA (beforeinstallprompt) capturado');
+    const btnInstallHeader = document.getElementById('btnInstallPwa');
+    if (btnInstallHeader) {
+      btnInstallHeader.classList.add('pulse-highlight');
+    }
+  });
+
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    alert('🎉 ¡Enhorabuena! La aplicación se ha instalado correctamente en tu pantalla de inicio.');
+  });
+
+  const btnInstallPwa = document.getElementById('btnInstallPwa');
+  if (btnInstallPwa) {
+    btnInstallPwa.addEventListener('click', triggerPwaInstallation);
+  }
+
+  const btnInstallPwaTab = document.getElementById('btnInstallPwaTab');
+  if (btnInstallPwaTab) {
+    btnInstallPwaTab.addEventListener('click', triggerPwaInstallation);
+  }
+
+  const btnCloseGuide = document.getElementById('btnCloseInstallGuide');
+  if (btnCloseGuide) {
+    btnCloseGuide.addEventListener('click', closeInstallGuideModal);
+  }
+
+  const btnDoneGuide = document.getElementById('btnDoneInstallGuide');
+  if (btnDoneGuide) {
+    btnDoneGuide.addEventListener('click', closeInstallGuideModal);
+  }
+
+  const btnTriggerAndroid = document.getElementById('btnTriggerAndroidInstall');
+  if (btnTriggerAndroid) {
+    btnTriggerAndroid.addEventListener('click', async () => {
+      if (deferredInstallPrompt) {
+        deferredInstallPrompt.prompt();
+        const { outcome } = await deferredInstallPrompt.userChoice;
+        if (outcome === 'accepted') {
+          deferredInstallPrompt = null;
+          closeInstallGuideModal();
+        }
+      } else {
+        alert('Para añadir el icono en Android:\n1. Toca en los 3 puntos (⋮) arriba a la derecha en Chrome.\n2. Pulsa en "Añadir a pantalla de inicio" o "Instalar aplicación".');
+      }
+    });
+  }
+}
+
+function isIosDevice() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+}
+
+function isStandaloneMode() {
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+
+async function triggerPwaInstallation() {
+  if (isStandaloneMode()) {
+    alert('📱 ¡La mini-app ya está instalada y ejecutándose como acceso directo en tu pantalla!');
+    return;
+  }
+
+  // Si Chrome/Edge tiene listo el diálogo nativo de instalación
+  if (deferredInstallPrompt) {
+    deferredInstallPrompt.prompt();
+    const { outcome } = await deferredInstallPrompt.userChoice;
+    if (outcome === 'accepted') {
+      deferredInstallPrompt = null;
+      return;
+    }
+  }
+
+  // En iOS Safari o dispositivos donde no se dispara el prompt automático, abrimos la guía visual asistida
+  openInstallGuideModal();
+}
+
+function openInstallGuideModal() {
+  const modal = document.getElementById('installGuideModal');
+  if (!modal) return;
+
+  const guideAndroid = document.getElementById('guideAndroid');
+  const guideIos = document.getElementById('guideIos');
+
+  if (isIosDevice()) {
+    if (guideAndroid) guideAndroid.classList.add('hidden');
+    if (guideIos) guideIos.classList.remove('hidden');
+  } else {
+    if (guideAndroid) guideAndroid.classList.remove('hidden');
+    if (guideIos) guideIos.classList.remove('hidden');
+  }
+
+  modal.classList.remove('hidden');
+}
+
+function closeInstallGuideModal() {
+  const modal = document.getElementById('installGuideModal');
+  if (modal) modal.classList.add('hidden');
 }
